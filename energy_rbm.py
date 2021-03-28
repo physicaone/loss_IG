@@ -54,6 +54,7 @@ class RBM(nn.Module):
         return torch.mean(-h_term - v_term)
     
     def energy(self, v):
+        v=v.bernoulli()
         h=torch.sigmoid(F.linear(v, self.W, self.h))
         h=h.bernoulli()
         return -torch.matmul(v, self.v.t())-torch.matmul(torch.matmul(v, self.W.t()),h.t())-torch.matmul(h, self.h.t())
@@ -68,150 +69,79 @@ class RBM(nn.Module):
             h = h.bernoulli()
         return v, v_gibb
 
-def get_listmk(epoch1):
-    config_count={} # 각 hidden layer state 갯수 파악 (k)
-    for i in range(len(epoch1)):
-        config_count[epoch1[i]]=0
-    for i in range(len(epoch1)):
-        config_count[epoch1[i]]+=1
-        
-    listk=[]
-    for i in range(len(list(config_count.values()))):
-        listk.append(int(list(config_count.values())[i]))
-    listmk=[]
-    kcount={}
-
-
-    # 갯수의 갯수 파악 (m_k)
-    for i in range(len(listk)):
-        kcount[listk[i]]=0
-    for i in range(len(listk)):
-        kcount[listk[i]]+=1
-    for i in range(len(kcount)):
-        listmk.append(kcount[sorted(list(kcount))[i]])
-
-    return sorted(list(kcount)), listmk
+def transform_str_list(list0):
+    list1=[]
+    for i in range(len(list0)):    
+        aa=np.array(list0[i].strip('][ tensor()').strip('\n').replace('\n','').split(', ')).astype(float)
+        list1.append(aa)
     
+    return torch.from_numpy(np.array(list1)).float()  
 
+def get_first_Trues(idx, vol):
+    i=0
+    for k in range(len(idx)):
+        if idx[k]==True:
+            i=i+1
+            if i>vol:
+                idx[k:]=False
+                break        
+    return idx
 
-def get_H_k(x, y):
-    list100=[]
-    list100kmk=[]
-    for i in range(len(x)):
-        list100kmk.append(x[i]*y[i])
-    for i in range(len(x)):
-        for j in range(list100kmk[i]):
-            list100.append(x[i])
-    N=len(list100)
-    H_k=0
-    for i in range(len(x)):
-        H_k-=(x[i]*y[i]/N)*np.log2(x[i]*y[i]/N)
-    return H_k
+def get_small_mnist(vol, train_or_test, class_list):
+    if train_or_test=='train':
+        dataset = datasets.MNIST(root='../dataset/MNIST',train=True,download=True,
+                                 transform=transforms.ToTensor())
+    elif train_or_test=='test':
+        dataset = datasets.MNIST(root='../dataset/MNIST',train=False,download=True,
+                                 transform=transforms.ToTensor())
+        
+    dataset.targets = torch.tensor(dataset.targets)
+#     idx = dataset.targets==0
 
-def get_H_s(x, y):
-    list100=[]
-    list100kmk=[]
-    for i in range(len(x)):
-        list100kmk.append(x[i]*y[i])
-    for i in range(len(x)):
-        for j in range(list100kmk[i]):
-            list100.append(x[i])
-    N=len(list100)
-    H_s=0
-    for i in range(len(x)):
-        H_s-=(x[i]*y[i]/N)*np.log2(x[i]/N)
-    return H_s
+    idx_list=[]
+    for k in class_list:
+        idx = dataset.targets==k
+        idx = get_first_Trues(idx, vol)
+        idx_list.append(idx)
+    idx=sum(idx_list)
+    idx2=[]
+    for i in range(len(idx)):
+        if idx[i]>=1:
+            idx2.append(True)
+        else:
+            idx2.append(False)
+    idx2=torch.tensor(idx2)
+    dataset.targets= dataset.targets[idx2]
+    dataset.data = dataset.data[idx2]
+    return dataset
 
-def get_mu_larger_than_1(x, y):
-    list100=[]
-    list100kmk=[]
-    for i in range(len(x)):
-        list100kmk.append(x[i]*y[i])
-    for i in range(len(x)):
-        for j in range(list100kmk[i]):
-            list100.append(x[i])
-    N=len(list100)
-    mu=1+np.log(2)/(np.log2(N)-get_H_s(x,y))
-    return mu
+def IG_loss(model0, model1, data0, v_sample0):
+    E0=0; E1=0
+    F_V = model0.free_energy(data0)
 
-def get_mu_smaller_than_1(x, y):
-    mu=1-1/(get_H_s(x,y)*np.log(2))
-    return mu
+    v_sample0=torch.tensor(v_sample0)
+    for i in range(len(v_sample0)):
+        E0 += model0.energy(v_sample0[i])/len(v_sample0)
+        E1 += model1.energy(v_sample0[i])/len(v_sample0)
+    return float(F_V), float(E1), float(E0)
 
-def get_entropies(x,y):
-    H_k=get_H_k(x,y)
-    H_s=get_H_s(x,y)
-    mus=get_mu_larger_than_1(x,y)
-    mul=get_mu_smaller_than_1(x,y)
-    print("H_k = %f, H_s = %f, mu = %f and %f" %(H_k, H_s, mus, mul))
-
-def get_ccdf_y(x,y):
-    listkmk=[]
-    listkmk_cum=[]
-    for i in range(len(y)):
-        listkmk.append(x[i]*y[i])
-    sum_listkmk=sum(listkmk)
-    for i in range(len(listkmk)):
-        listkmk_cum.append(sum(listkmk)/sum_listkmk)
-        listkmk.pop(0)
-    return listkmk_cum
-
-def get_exponent(x,y):
-    expo=-1-get_mu_larger_than_1(x,y)
-    return expo
-
-def get_state(x,y):
-    list00=[]
-    for i in range(len(x)):
-        for j in range(y[i]):
-            list00.append(x[i])
-
-    return list00
-
-
-def get_logbin(x,y):
-    bins = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-    list00=get_state(x,y)
-    y1,x1,_ = plt.hist(list00, bins = bins, histtype='step', color='white')
-    x1 = 0.5*(x1[1:]+x1[:-1])
-    y1_=[]
-    dummy=0
-    for i in range(len(y1)):
-        if y1[i]!=0.0:
-            dummy+=1
-    for i in range(dummy):
-        y1_.append(y1[i]/((bins[i+1]-bins[i])))
-    plt.close()
-
-    return x1[0:dummy], y1_
-
-def get_MLE_exponent(x,y):
-    fit1 = pl.Fit(get_state(x, y), discrete=True, xmin=0)
-    print(fit1.power_law.alpha)
-
-def get_MLE_exponent_mk_cut(x,y):
-    x_bin, y_bin=get_logbin(x,y)
-    cri1=0
-    cri2=0
-    for i in range(len(y_bin)):
-        if y_bin[i]<1.:
-            cri1=i
-            break
-    x_cri=x_bin[cri1-1]
-    for j in range(len(x)):
-        if x[j]>x_cri:
-            cri2=j
-            break
-    x2=x[0:cri2-1]; y2=y[0:cri2-1]
-    fit1 = pl.Fit(get_state(x2, y2), discrete=True, xmin=0)
-    print(fit1.power_law.alpha)
-
-    return x2,y2
-
-
-
-
-
-
-
+def check_energy(model0, model1, n_sample=10000, step_eq=500):
+    E0_list=[]; E1_list=[]
+    v_list=[]
+    input_random=torch.round(torch.rand(n_vis).view(1, n_vis)).to(device)
+    for i in range(step_eq):
+        h_sample=model0.visible_to_hidden(input_random)
+        h_sample=h_sample.bernoulli()
+        v_sample=model0.hidden_to_visible(h_sample)
+        v_sample=v_sample.bernoulli()
+        input_random=v_sample
+    for n in tqdm(range(n_sample)):
+        h_sample=model0.visible_to_hidden(v_sample)
+        h_sample=h_sample.bernoulli()
+        v_sample=model0.hidden_to_visible(h_sample)
+        v_list.append(np.squeeze(v_sample.detach().to(device).numpy()))
+        v_sample=v_sample.bernoulli()
+        E0_list.append(np.squeeze(model0.energy(v_sample).detach().to(device).numpy()))
+        E1_list.append(np.squeeze(model1.energy(v_sample).detach().to(device).numpy()))
+    return np.array(E0_list), np.array(E1_list), np.array(E1_list)-np.array(E0_list), v_list
 
